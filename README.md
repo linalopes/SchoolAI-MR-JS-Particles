@@ -15,7 +15,7 @@ A WebXR mixed-reality particle system for Meta Quest 3 that uses hand tracking t
 
 ![](https://cloud.linalopes.info/index.php/apps/files_sharing/publicpreview/greWjZg8XZWxoYr?file=Screenshot%202026-02-11%20at%2018.57.59.png&x=2400&y=2400&a=true)
 
-[![Preview](https://cloud.linalopes.info/index.php/apps/files_sharing/publicpreview/greWjZg8XZWxoYr?file=SEU_THUMB.jpg&x=1600&y=900&a=true)](https://cloud.linalopes.info/public.php/dav/files/greWjZg8XZWxoYr/copy_E11B4C86-C55E-4B28-965C-8F1ABA836D35.mp4)
+[Watch video](https://seu-site-ou-github-pages/watch.html)
 
 
 ## Getting Started
