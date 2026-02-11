@@ -1,4 +1,4 @@
-# SchoolAI-MR-JS-Particles
+# Mixed Reality Particles (WebXR)
 
 A WebXR mixed-reality particle system for Meta Quest 3 that uses hand tracking to control interactive particle effects in passthrough AR, with a desktop browser fallback.
 
@@ -13,7 +13,9 @@ A WebXR mixed-reality particle system for Meta Quest 3 that uses hand tracking t
 
 ## Demo / Screenshots
 
-<!-- TODO: Add screenshot or GIF of the particle system running on Quest 3 and/or desktop -->
+![](https://cloud.linalopes.info/index.php/apps/files_sharing/publicpreview/greWjZg8XZWxoYr?file=Screenshot%202026-02-11%20at%2018.57.59.png&x=2400&y=2400&a=true)
+
+
 
 ## Getting Started
 
@@ -40,6 +42,8 @@ No `npm install` required.
 
 The project ships with self-signed SSL certificates (`cert.pem` / `key.pem`) for local development. WebXR requires HTTPS, which is why the server uses TLS.
 
+> **Warning:** The included `cert.pem` and `key.pem` are for **local development only**. Never use self-signed certificates in production. For public deployments, use a proper certificate authority (e.g., [Let's Encrypt](https://letsencrypt.org/)).
+
 | Variable | Location | Default | Description |
 |---|---|---|---|
 | `PORT` | `server.js` line 49 | `8443` | HTTPS server port |
@@ -56,6 +60,8 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -node
 ### Running Locally
 
 ```bash
+npm start
+# or directly:
 node server.js
 ```
 
@@ -85,15 +91,34 @@ Open **https://localhost:8443/** in your browser. You will see a security warnin
 | Pinch (index + thumb) | Cycle particle mode |
 | Point (index finger) in Sculpt mode | Attract particles toward fingertip |
 
+## Quest Testing (LAN + HTTPS)
+
+To test on a Meta Quest 3 headset you need both devices on the same local network and an HTTPS connection.
+
+> **Why HTTPS?** The WebXR Device API is gated behind [Secure Contexts](https://w3c.github.io/webappsec-secure-contexts/). Browsers will not expose `navigator.xr` over plain HTTP, so the dev server must use TLS — even with a self-signed certificate.
+
+**Step-by-step:**
+
+- [ ] Quest and computer are on the **same Wi-Fi** (avoid guest / isolated networks).
+- [ ] Find your computer's local IP:
+  - macOS: **System Settings → Wi-Fi → Details → IP Address**, or run `ifconfig | grep "inet "` in a terminal.
+  - Windows: run `ipconfig` and look for the IPv4 address.
+- [ ] Start the server: `npm start` (or `node server.js`).
+- [ ] On Quest Browser, open: `https://<LOCAL-IP>:8443/`
+- [ ] Accept the self-signed certificate warning (**Advanced → Proceed**).
+- [ ] If it doesn't load: check your firewall and make sure **port 8443** is open for inbound connections.
+
 ## Project Structure
 
 ```
 SchoolAI-MR-JS-Particles/
-├── index.html   # Main application — Three.js scene, particle system, WebXR, UI (710 lines)
-├── server.js    # Node.js HTTPS static file server (55 lines)
-├── cert.pem     # Self-signed SSL certificate
-├── key.pem      # SSL private key
-└── README.md    # This file
+├── index.html    # Main application — Three.js scene, particle system, WebXR, UI
+├── server.js     # Node.js HTTPS static file server
+├── package.json  # Project metadata & npm scripts (no dependencies)
+├── cert.pem      # Self-signed SSL certificate (local dev only, git-ignored)
+├── key.pem       # SSL private key (local dev only, git-ignored)
+├── LICENSE        # MIT License
+└── README.md     # This file
 ```
 
 - **`index.html`** — Contains everything: HTML structure, CSS styles, and all JavaScript (inline `<script>` block). Sections are clearly numbered 1–8 covering configuration, Three.js setup, particle system, UI wiring, WebXR session management, particle dynamics, desktop fallback, and window resize handling.
@@ -103,7 +128,8 @@ SchoolAI-MR-JS-Particles/
 
 | Command | Description |
 |---|---|
-| `node server.js` | Start the HTTPS development server on port 8443 |
+| `npm start` | Start the HTTPS development server on port 8443 |
+| `npm run dev` | Alias for `npm start` |
 
 ## Testing
 
@@ -133,20 +159,10 @@ No Dockerfile or CI/CD configuration is present.
 
 ## License
 
-<!-- TODO: Add a LICENSE file to the repository. -->
-
-No license file found. Please add one before distributing.
+[MIT](LICENSE) — Copyright (c) 2026 Lina Lopes
 
 ## Credits / Acknowledgements
 
 - [Three.js](https://threejs.org/) (r128) — 3D rendering engine
 - [WebXR Device API](https://immersiveweb.dev/) — Mixed reality and hand tracking
 - [WebXR Hand Input API](https://www.w3.org/TR/webxr-hand-input-1/) — Joint-level hand tracking
-
-## Open Questions / TODO
-
-- [ ] **License** — No `LICENSE` file exists. Add one to clarify usage terms.
-- [ ] **Screenshots / Demo** — Add a GIF or screenshot showing the particle system on Quest 3 and desktop.
-- [ ] **package.json** — Consider adding one for metadata, scripts (`"start": "node server.js"`), and potential future dependencies.
-- [ ] **Network access on Quest** — Document how to find the host machine's local IP and any firewall considerations for Quest testing.
-- [ ] **Certificate regeneration** — The shipped `cert.pem` / `key.pem` will eventually expire; document the expiry date or automate renewal.
