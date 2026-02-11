@@ -15,7 +15,9 @@ A WebXR mixed-reality particle system for Meta Quest 3 that uses hand tracking t
 
 ![](https://cloud.linalopes.info/index.php/apps/files_sharing/publicpreview/greWjZg8XZWxoYr?file=Screenshot%202026-02-11%20at%2018.57.59.png&x=2400&y=2400&a=true)
 
-
+<video controls playsinline preload="metadata" width="25%">
+  <source src="https://cloud.linalopes.info/public.php/dav/files/ID-FOLDER/VIDEO-NAME.mp4" type="video/mp4">
+</video>
 
 ## Getting Started
 
@@ -131,13 +133,6 @@ SchoolAI-MR-JS-Particles/
 | `npm start` | Start the HTTPS development server on port 8443 |
 | `npm run dev` | Alias for `npm start` |
 
-## Testing
-
-No automated tests found.
-
-## Linting / Formatting
-
-No linting or formatting tools are configured.
 
 ## Build / Deployment
 
