@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meta Quest 3 — Mixed Reality Particles (WebXR)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+    canvas { display: block; }
+
+    /* UI Overlay (kept lightweight; works best with DOM Overlay when available) */
+    #ui-layer{
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      color: #fff;
+      user-select: none;
+      pointer-events: none; /* let clicks pass through except controls */
+    }
+
+    #ui-card{
+      pointer-events: auto;
+      width: min(420px, calc(100vw - 32px));
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 12px 12px 10px 12px;
+      backdrop-filter: blur(8px);
+    }
+
+    #title-row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    #title-row h1{
+      font-size: 14px;
+      margin: 0;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      opacity: 0.95;
+    }
+
+    #status{
+      font-size: 12px;
+      opacity: 0.85;
+      white-space: nowrap;
+    }
+
+    .row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+    .row small{ opacity: 0.85; }
+
+    .btn{
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn:hover{ background: rgba(255,255,255,0.10); }
+    .btn.active{ border-color: rgba(255,255,255,0.38); background: rgba(255,255,255,0.14); }
+
+    input[type="color"]{
+      height: 30px;
+      width: 46px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    #hint{
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.3;
+      opacity: 0.86;
+    }
+
+    /* Fallback overlay for non-XR */
+    #fallback{
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 10;
+      max-width: 520px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      color: #fff;
+      font-size: 12px;
+      opacity: 0.9;
+      display: none;
+    }
+  </style>
+
+  <!-- Three.js (same version as your original to keep behavior consistent) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="ui-layer">
+    <div id="ui-card">
+      <div id="title-row">
+        <h1>MR Particles — Quest Browser (WebXR)</h1>
+        <div id="status">Initializing…</div>
+      </div>
+
+      <div class="row" style="margin-bottom:8px;">
+        <button id="enterMR" class="btn">Enter Mixed Reality</button>
+        <button id="recenter" class="btn">Recenter</button>
+      </div>
+
+      <div class="row">
+        <small>Mode</small>
+        <button id="btn-nebula" class="btn active">Nebula</button>
+        <button id="btn-swarm" class="btn">Swarm</button>
+        <button id="btn-burst" class="btn">Burst</button>
+        <button id="btn-sculpt" class="btn">Sculpt</button>
+      </div>
+
+      <div class="row" style="margin-top:8px;">
+        <small>Color</small>
+        <input id="colorPicker" type="color" value="#ff0055"/>
+        <small>Particles</small>
+        <button id="less" class="btn">-</button>
+        <button id="more" class="btn">+</button>
+      </div>
+
+      <div id="hint">
+        Quest: enable Hand Tracking in system settings. In MR, open/close your hand to expand/implode the cloud. Pinch (index) to switch modes.
+      </div>
+    </div>
+  </div>
+
+  <div id="fallback">
+    <b>Desktop fallback:</b> Drag = orbit, mouse wheel = expand/implode. Click = cycle mode.
+  </div>
+
+<script>
+/**
+ * Meta Quest 3 Mixed Reality particles (WebXR)
+ * - Runs in Meta Quest Browser with passthrough MR using immersive-ar
+ * - Uses WebXR hand-tracking joints (no camera/video required)
+ * - Desktop fallback: orbit controls + wheel to drive "handTension"
+ *
+ * Notes:
+ * - DOM Overlay is optional; if not supported, UI still shows in 2D view on desktop
+ * - In Quest, UI may or may not appear in-headset depending on DOM Overlay support
+ */
+
+// ------------------------------------------------------------
+// 1) CONFIGURATION & STATE
+// ------------------------------------------------------------
+const config = {
+  particleCount: 9000,           // start conservative for Quest
+  maxParticles: 15000,
+  minParticles: 3000,
+  baseColor: new THREE.Color(0xff0055),
+  handTension: 1.0,              // 0 = closed (implode), 1 = open (expand)
+  handPresent: false,
+  mode: 'nebula',                // nebula | swarm | burst | sculpt
+  pinchLatched: false,
+  worldAnchor: new THREE.Object3D(), // where particles live
+};
+
+const statusEl = document.getElementById('status');
+function setStatus(s){ statusEl.textContent = s; }
+
+// ------------------------------------------------------------
+// 2) THREE.JS SETUP (WebXR-enabled)
+// ------------------------------------------------------------
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
+camera.position.set(0, 1.6, 2.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// A gentle ambient + directional helps particles feel "present" in MR
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+dir.position.set(1, 2, 1);
+scene.add(dir);
+
+// Place the particle system ~1m in front of the user by default
+config.worldAnchor.position.set(0, 1.35, -1.1);
+scene.add(config.worldAnchor);
+
+// ------------------------------------------------------------
+// 3) PARTICLE SYSTEM (based on your original approach)
+// ------------------------------------------------------------
+function createParticleTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32; canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.25,'rgba(255,255,255,0.6)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+  grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 32, 32);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const particleTexture = createParticleTexture();
+
+let particles, targets, velocities;
+function buildParticleSystem(count){
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(count * 3);
+  targets   = new Float32Array(count * 3);
+  velocities= new Float32Array(count * 3);
+
+  for (let i = 0; i < count; i++) {
+    const i3 = i * 3;
+    // init as a soft sphere-ish cloud
+    const r = 10 * Math.cbrt(Math.random());
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+
+    positions[i3]     = r * Math.sin(phi) * Math.cos(theta);
+    positions[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i3 + 2] = r * Math.cos(phi);
+
+    targets[i3]     = positions[i3];
+    targets[i3 + 1] = positions[i3 + 1];
+    targets[i3 + 2] = positions[i3 + 2];
+  }
+
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.PointsMaterial({
+    size: 0.16,
+    map: particleTexture,
+    transparent: true,
+    opacity: 0.95,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    color: config.baseColor
+  });
+
+  const pts = new THREE.Points(geometry, material);
+  return pts;
+}
+
+function rebuildParticles(newCount){
+  if (particles) config.worldAnchor.remove(particles);
+  config.particleCount = newCount;
+  particles = buildParticleSystem(newCount);
+  config.worldAnchor.add(particles);
+}
+rebuildParticles(config.particleCount);
+
+// Helpers to update targets per mode
+function updateTargets(mode){
+  config.mode = mode;
+  const arr = targets;
+  const count = config.particleCount;
+
+  for (let i = 0; i < count; i++) {
+    const i3 = i * 3;
+
+    let x=0, y=0, z=0;
+
+    if (mode === 'nebula') {
+      // organic-ish distribution (sphere + slight banding)
+      const r = 10 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      x = r * Math.sin(phi) * Math.cos(theta);
+      y = r * Math.sin(phi) * Math.sin(theta);
+      z = r * Math.cos(phi);
+
+      // subtle "galaxy" flattening + curl
+      y *= 0.72;
+      const curl = 0.18;
+      const tx = x, tz = z;
+      x = tx * Math.cos(curl) - tz * Math.sin(curl);
+      z = tx * Math.sin(curl) + tz * Math.cos(curl);
+
+    } else if (mode === 'swarm') {
+      // slightly wider cloud to let "boids-ish" forces read
+      const r = 12 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      x = r * Math.sin(phi) * Math.cos(theta);
+      y = r * Math.sin(phi) * Math.sin(theta);
+      z = r * Math.cos(phi);
+
+    } else if (mode === 'burst') {
+      // start near center, let burst be in velocity/noise
+      const r = 2.5 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      x = r * Math.sin(phi) * Math.cos(theta);
+      y = r * Math.sin(phi) * Math.sin(theta);
+      z = r * Math.cos(phi);
+
+    } else if (mode === 'sculpt') {
+      // sphere baseline; sculpting comes from hand attractor
+      const r = 10 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      x = r * Math.sin(phi) * Math.cos(theta);
+      y = r * Math.sin(phi) * Math.sin(theta);
+      z = r * Math.cos(phi);
+    }
+
+    arr[i3]     = x;
+    arr[i3 + 1] = y;
+    arr[i3 + 2] = z;
+  }
+}
+updateTargets('nebula');
+
+// ------------------------------------------------------------
+// 4) UI WIRING
+// ------------------------------------------------------------
+const modeButtons = {
+  nebula: document.getElementById('btn-nebula'),
+  swarm:  document.getElementById('btn-swarm'),
+  burst:  document.getElementById('btn-burst'),
+  sculpt: document.getElementById('btn-sculpt'),
+};
+function setMode(mode){
+  Object.values(modeButtons).forEach(b => b.classList.remove('active'));
+  modeButtons[mode].classList.add('active');
+  updateTargets(mode);
+}
+modeButtons.nebula.onclick = () => setMode('nebula');
+modeButtons.swarm.onclick  = () => setMode('swarm');
+modeButtons.burst.onclick  = () => setMode('burst');
+modeButtons.sculpt.onclick = () => setMode('sculpt');
+
+document.getElementById('colorPicker').addEventListener('input', (e) => {
+  config.baseColor.set(e.target.value);
+  if (particles) particles.material.color = config.baseColor;
+});
+
+document.getElementById('less').onclick = () => {
+  const next = Math.max(config.minParticles, config.particleCount - 1500);
+  rebuildParticles(next);
+  updateTargets(config.mode);
+};
+document.getElementById('more').onclick = () => {
+  const next = Math.min(config.maxParticles, config.particleCount + 1500);
+  rebuildParticles(next);
+  updateTargets(config.mode);
+};
+
+document.getElementById('recenter').onclick = () => {
+  // Put anchor 1.1m in front of the viewer (approx). In XR, camera is XR viewer pose.
+  config.worldAnchor.position.set(0, 1.35, -1.1);
+};
+
+// ------------------------------------------------------------
+// 5) WEBXR SESSION (MR / passthrough) + HAND TRACKING
+// ------------------------------------------------------------
+let xrSession = null;
+let xrRefSpace = null;
+
+async function isWebXRSupported(){
+  if (!navigator.xr) return false;
+  try {
+    return await navigator.xr.isSessionSupported('immersive-ar');
+  } catch(e) {
+    return false;
+  }
+}
+
+function distance3(a,b){
+  const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+  return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+function lerp(a,b,t){ return a + (b-a)*t; }
+
+// We compute:
+// - openness: distance(wrist, middle-tip) mapped to 0..1
+// - pinch: distance(index-tip, thumb-tip) thresholded
+function updateHandFromXRFrame(frame){
+  if (!xrSession || !xrRefSpace) return;
+
+  let anyHand = false;
+  let openness = null;
+  let pinch = false;
+  let pinchStrength = 0;
+
+  for (const src of xrSession.inputSources) {
+    if (!src.hand) continue;
+
+    const wristSpace = src.hand.get('wrist');
+    const midTipSpace = src.hand.get('middle-finger-tip');
+    const indexTipSpace = src.hand.get('index-finger-tip');
+    const thumbTipSpace = src.hand.get('thumb-tip');
+
+    if (!wristSpace || !midTipSpace) continue;
+
+    const wristPose = frame.getJointPose(wristSpace, xrRefSpace);
+    const midPose   = frame.getJointPose(midTipSpace, xrRefSpace);
+
+    if (!wristPose || !midPose) continue;
+
+    anyHand = true;
+
+    // raw distance tends to be around 0.05..0.18 meters depending on openness
+    const d = distance3(wristPose.transform.position, midPose.transform.position);
+
+    // Map meters to 0..1 (tuneable)
+    // closed ~0.06, open ~0.16
+    let o = (d - 0.065) / (0.16 - 0.065);
+    o = Math.max(0, Math.min(1, o));
+    openness = (openness === null) ? o : Math.max(openness, o); // prefer "more open" if multiple hands
+
+    // pinch
+    const idxPose = indexTipSpace ? frame.getJointPose(indexTipSpace, xrRefSpace) : null;
+    const thPose  = thumbTipSpace ? frame.getJointPose(thumbTipSpace, xrRefSpace) : null;
+    if (idxPose && thPose) {
+      const pd = distance3(idxPose.transform.position, thPose.transform.position);
+      // pinch distance ~0.01..0.04m
+      pinchStrength = Math.max(pinchStrength, 1 - Math.min(1, (pd - 0.012) / 0.03));
+      if (pd < 0.018) pinch = true;
+    }
+
+    // Provide sculpt attractor point (index tip) if available
+    if (config.mode === 'sculpt' && indexTipSpace && idxPose) {
+      const p = idxPose.transform.position;
+      sculptAttractor.set(p.x, p.y, p.z);
+      sculptHasAttractor = true;
+    }
+  }
+
+  config.handPresent = anyHand;
+
+  if (anyHand && openness !== null) {
+    // Smooth for stability
+    config.handTension = lerp(config.handTension, openness, 0.12);
+    setStatus(pinch ? "Hand: pinch" : "Hand: tracking");
+  } else {
+    // No hand: drift toward open (calm)
+    config.handTension = lerp(config.handTension, 1.0, 0.03);
+    setStatus("Waiting for hand…");
+  }
+
+  // Pinch to cycle modes (latched)
+  if (pinch && !config.pinchLatched) {
+    config.pinchLatched = true;
+    cycleMode();
+  }
+  if (!pinch) config.pinchLatched = false;
+
+  // small visual feedback by modulating size with pinch strength
+  if (particles) {
+    particles.material.size = 0.14 + 0.07 * pinchStrength;
+  }
+}
+
+// Start/stop XR
+async function enterMR(){
+  if (!navigator.xr) {
+    alert("WebXR not available in this browser.");
+    return;
+  }
+
+  const supported = await isWebXRSupported();
+  if (!supported) {
+    alert("immersive-ar not supported. On Quest, open this in Meta Quest Browser.");
+    return;
+  }
+
+  const features = {
+    requiredFeatures: ['local'],
+    optionalFeatures: ['hand-tracking', 'dom-overlay', 'local-floor', 'bounded-floor', 'hit-test'],
+    domOverlay: { root: document.body }
+  };
+
+  try {
+    xrSession = await navigator.xr.requestSession('immersive-ar', features);
+    xrSession.addEventListener('end', () => {
+      xrSession = null;
+      xrRefSpace = null;
+      setStatus("Exited MR");
+    });
+
+    renderer.xr.setSession(xrSession);
+    xrRefSpace = await xrSession.requestReferenceSpace('local');
+
+    setStatus("MR running");
+  } catch (e) {
+    console.error(e);
+    alert("Failed to start MR session: " + e.message);
+  }
+}
+
+document.getElementById('enterMR').onclick = enterMR;
+
+// ------------------------------------------------------------
+// 6) PARTICLE DYNAMICS (modes) + RENDER LOOP
+// ------------------------------------------------------------
+const clock = new THREE.Clock();
+
+// Sculpt attractor in world space (XR reference space)
+const sculptAttractor = new THREE.Vector3(0, 1.4, -0.8);
+let sculptHasAttractor = false;
+
+function cycleMode(){
+  const order = ['nebula','swarm','burst','sculpt'];
+  const idx = order.indexOf(config.mode);
+  const next = order[(idx + 1) % order.length];
+  setMode(next);
+}
+
+function applyDynamics(delta, time){
+  if (!particles) return;
+
+  const positionsArr = particles.geometry.attributes.position.array;
+  const count = config.particleCount;
+
+  // Overall expand/implode
+  const scaleTarget = 0.22 + (config.handTension * 1.35);
+
+  // Gentle rotation for presence
+  particles.rotation.y = time * 0.12;
+
+  // Mode-tuned parameters
+  const baseAttract = (config.mode === 'swarm') ? 1.7 : 1.25;
+  const damping = (config.mode === 'swarm') ? 0.88 : 0.90;
+
+  const burstNoise = (config.mode === 'burst') ? (0.08 + 0.22 * config.handTension) : 0.03;
+  const swirl = (config.mode === 'nebula') ? 0.25 : 0.10;
+
+  // For sculpt: treat index tip as a "magnet"
+  const sculptStrength = (config.mode === 'sculpt' && config.handPresent && sculptHasAttractor) ? 6.0 : 0.0;
+
+  for (let i = 0; i < count; i++) {
+    const i3 = i * 3;
+
+    // current
+    let px = positionsArr[i3];
+    let py = positionsArr[i3 + 1];
+    let pz = positionsArr[i3 + 2];
+
+    // target
+    const tx = targets[i3] * scaleTarget;
+    const ty = targets[i3 + 1] * scaleTarget;
+    const tz = targets[i3 + 2] * scaleTarget;
+
+    // velocity
+    let vx = velocities[i3];
+    let vy = velocities[i3 + 1];
+    let vz = velocities[i3 + 2];
+
+    // attraction to target
+    vx += (tx - px) * (baseAttract * delta);
+    vy += (ty - py) * (baseAttract * delta);
+    vz += (tz - pz) * (baseAttract * delta);
+
+    // nebula swirl (simple curl around Y)
+    if (config.mode === 'nebula') {
+      vx += (-pz) * swirl * delta;
+      vz += ( px) * swirl * delta;
+    }
+
+    // burst adds randomness when open
+    if (config.mode === 'burst') {
+      vx += (Math.random() - 0.5) * burstNoise;
+      vy += (Math.random() - 0.5) * burstNoise;
+      vz += (Math.random() - 0.5) * burstNoise;
+    }
+
+    // sculpt magnet: pull particles toward attractor position projected into local anchor space
+    if (sculptStrength > 0) {
+      // attractor in anchor-local coordinates:
+      const localA = sculptAttractor.clone();
+      config.worldAnchor.worldToLocal(localA);
+      vx += (localA.x - px) * sculptStrength * delta;
+      vy += (localA.y - py) * sculptStrength * delta;
+      vz += (localA.z - pz) * sculptStrength * delta;
+    }
+
+    // damping
+    vx *= damping;
+    vy *= damping;
+    vz *= damping;
+
+    // integrate
+    px += vx;
+    py += vy;
+    pz += vz;
+
+    // write back
+    velocities[i3]     = vx;
+    velocities[i3 + 1] = vy;
+    velocities[i3 + 2] = vz;
+
+    positionsArr[i3]     = px;
+    positionsArr[i3 + 1] = py;
+    positionsArr[i3 + 2] = pz;
+  }
+
+  particles.geometry.attributes.position.needsUpdate = true;
+
+  // Reset sculpt attractor each frame
+  sculptHasAttractor = false;
+}
+
+function renderLoop(time, frame){
+  const delta = clock.getDelta();
+  const t = clock.getElapsedTime();
+
+  // XR hand update if we have a frame
+  if (frame) updateHandFromXRFrame(frame);
+
+  applyDynamics(delta, t);
+
+  renderer.render(scene, camera);
+}
+
+// Use setAnimationLoop to support XR and non-XR
+renderer.setAnimationLoop(renderLoop);
+
+// ------------------------------------------------------------
+// 7) DESKTOP FALLBACK (simple orbit + wheel control)
+// ------------------------------------------------------------
+let isDesktop = !navigator.xr;
+const fallbackEl = document.getElementById('fallback');
+if (!navigator.xr) {
+  fallbackEl.style.display = 'block';
+  setStatus("Desktop mode");
+}
+
+// Minimal orbit (no external deps) — only for desktop
+let dragging = false;
+let lastX = 0, lastY = 0;
+let yaw = 0, pitch = 0;
+const orbitRadius = 28;
+
+function updateCameraOrbit(){
+  const x = orbitRadius * Math.sin(yaw) * Math.cos(pitch);
+  const z = orbitRadius * Math.cos(yaw) * Math.cos(pitch);
+  const y = orbitRadius * Math.sin(pitch) * 0.6;
+  camera.position.set(x, y, z);
+  camera.lookAt(new THREE.Vector3(0, 0, 0));
+}
+
+window.addEventListener('pointerdown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('pointerup', () => { dragging = false; });
+window.addEventListener('pointermove', (e) => {
+  if (!dragging || navigator.xr) return;
+  const dx = (e.clientX - lastX) * 0.005;
+  const dy = (e.clientY - lastY) * 0.005;
+  lastX = e.clientX; lastY = e.clientY;
+  yaw -= dx;
+  pitch = Math.max(-1.0, Math.min(1.0, pitch - dy));
+  updateCameraOrbit();
+});
+
+window.addEventListener('wheel', (e) => {
+  if (navigator.xr) return;
+  // wheel drives hand tension
+  config.handTension = Math.max(0, Math.min(1, config.handTension + (e.deltaY > 0 ? -0.05 : 0.05)));
+});
+
+window.addEventListener('click', (e) => {
+  if (navigator.xr) return;
+  // click cycles modes
+  cycleMode();
+});
+
+updateCameraOrbit();
+
+// ------------------------------------------------------------
+// 8) RESIZE
+// ------------------------------------------------------------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Initial status
+(async () => {
+  if (!navigator.xr) return;
+  const supported = await isWebXRSupported();
+  setStatus(supported ? "Ready for MR" : "XR not supported");
+})();
+</script>
+</body>
+</html>
